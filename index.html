@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Unconscious - Nemdis · 歌词音乐站</title>
+<style>
+  :root {
+    --accent: #ec4141;
+    --accent-dim: rgba(236, 65, 65, 0.35);
+    --text-main: #ffffff;
+    --text-sub: rgba(255, 255, 255, 0.55);
+    --text-faint: rgba(255, 255, 255, 0.28);
+    --panel-bg: rgba(20, 20, 28, 0.55);
+    --player-h: 78px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    color: var(--text-main);
+    background: #0c0c12;
+    overflow: hidden;
+    position: relative;
+  }
+  /* 封面主色氛围背景（由 Canvas 提取后注入） */
+  #bg-layer, #bg-layer2 {
+    position: fixed; inset: 0; z-index: 0;
+    background: radial-gradient(ellipse at 32% 0%, rgba(40,40,70,0.6), rgba(8,8,14,0.94) 72%);
+    transition: opacity 0.9s ease;
+  }
+  #bg-layer2 { opacity: 0; }
+  #bg-layer::after, #bg-layer2::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(circle at 75% 90%, rgba(0,0,0,0.55), transparent 60%);
+  }
+
+  .app { position: relative; z-index: 1; height: 100vh; display: flex; flex-direction: column; }
+
+  /* ===== 顶部栏 ===== */
+  .topbar {
+    height: 56px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; backdrop-filter: blur(10px);
+    background: rgba(12,12,20,0.35); border-bottom: 1px solid rgba(255,255,255,0.06);
+    flex: none;
+  }
+  .topbar .logo { font-size: 16px; font-weight: 600; letter-spacing: 1px; }
+  .topbar .logo span { color: var(--accent); }
+  .mark-toggle {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--panel-bg); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 20px; padding: 5px 14px; cursor: pointer; color: var(--text-sub);
+    font-size: 13px; transition: all .25s; user-select: none;
+  }
+  .mark-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .mark-toggle.active { color: #fff; border-color: var(--accent); background: var(--accent-dim); }
+  .mark-toggle.active .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* ===== 主内容区 ===== */
+  .main {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    gap: clamp(30px, 6vw, 90px); padding: 10px 40px 30px; min-height: 0;
+  }
+
+  /* 黑胶唱片 */
+  .vinyl-wrap { flex: none; position: relative; }
+  .vinyl {
+    width: clamp(220px, 30vw, 340px); aspect-ratio: 1;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle, rgba(255,255,255,0.14) 0 2px, transparent 3px),
+      repeating-radial-gradient(circle at 50% 50%, #17171c 0px, #1d1d24 2px, #141419 4px, #1a1a21 6px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.7), inset 0 0 40px rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+    animation: spin 22s linear infinite;
+    animation-play-state: paused;
+  }
+  .vinyl.playing { animation-play-state: running; }
+  .vinyl::before {
+    content: ""; position: absolute; inset: 0; border-radius: 50%;
+    background: repeating-radial-gradient(circle at 50% 50%, transparent 0px, rgba(255,255,255,0.03) 1px, transparent 4px);
+  }
+  .vinyl::after {
+    content: ""; position: absolute; inset: 0; border-radius: 50%;
+    box-shadow: inset 0 -18px 40px rgba(0,0,0,0.55), inset 0 12px 28px rgba(255,255,255,0.06);
+  }
+  .disc-cover {
+    width: 72%; aspect-ratio: 1; border-radius: 50%; overflow: hidden;
+    background: #222; box-shadow: 0 0 0 6px rgba(0,0,0,0.55), 0 0 24px rgba(0,0,0,0.6);
+    position: relative; z-index: 2;
+  }
+  .disc-cover img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity .28s ease, transform .45s ease; }
+  .disc-cover img.swap-out { opacity: 0; transform: scale(0.94); }
+  .disc-cover img.swap-in { opacity: 1; transform: scale(1); }
+  .p-cover img { transition: opacity .28s ease; }
+  .p-cover img.swap-out { opacity: 0; }
+  .p-cover img.swap-in { opacity: 1; }
+  .disc-center {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 9%; aspect-ratio: 1; border-radius: 50%; background: #0e0e12; z-index: 3;
+    box-shadow: inset 0 0 4px #000, 0 0 6px rgba(0,0,0,0.8);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 歌词面板 */
+  .lyrics-panel {
+    flex: 1; max-width: 620px; min-width: 0; height: 62vh;
+    display: flex; flex-direction: column;
+  }
+  .lyrics-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 8px; padding: 0 6px; flex: none;
+  }
+  .lyrics-head .song-title { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
+  .lyrics-head .song-artist { font-size: 14px; color: var(--text-sub); margin-left: 10px; }
+  .mark-hint {
+    font-size: 12px; color: var(--accent); background: var(--accent-dim);
+    padding: 4px 12px; border-radius: 14px; display: none; flex: none;
+  }
+  .mark-hint.show { display: inline-block; }
+  .lyrics-viewport {
+    flex: 1; overflow-y: auto; padding: 8px 6px; min-height: 0; position: relative;
+    mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+  }
+  .lyrics-viewport::-webkit-scrollbar { width: 0; }
+  .lyric-line {
+    padding: 8px 10px; font-size: 17px; line-height: 1.45;
+    color: var(--text-sub); text-align: center;
+    transition: color .3s, opacity .3s, transform .3s ease;
+    border-radius: 8px; cursor: default; position: relative;
+    user-select: none; opacity: 0.75;
+  }
+  .lyric-line .lyric-main { transition: font-size .3s ease, color .3s, text-shadow .3s; line-height: 1.5; }
+  .lyric-line .lyric-trans {
+    display: block; font-size: 13px; color: var(--text-faint); line-height: 1.5;
+    transition: color .3s, opacity .3s; opacity: 0.85; margin-top: 2px;
+  }
+  .lyric-line.active {
+    color: #fff; opacity: 1;
+    text-shadow: 0 0 24px var(--accent-dim);
+    animation: lyricRiseIn 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes lyricRiseIn {
+    0%   { opacity: 0.25; transform: translateY(10px) scale(0.96); text-shadow: 0 0 0 transparent; }
+    60%  { opacity: 1; transform: translateY(-2px) scale(1.02); text-shadow: 0 0 16px var(--accent-dim); }
+    100% { opacity: 1; transform: translateY(0) scale(1); text-shadow: 0 0 24px var(--accent-dim); }
+  }
+  .lyric-line.active .lyric-main {
+    font-size: 21px; font-weight: 600;
+  }
+  .lyric-line.active .lyric-trans {
+    color: var(--accent); opacity: 0.75;
+  }
+  .lyrics-viewport.fading { opacity: 0; }
+  .lyrics-viewport { transition: opacity .35s ease; }
+  .lyric-line .ts-tag {
+    display: none; position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+    font-size: 11px; color: var(--accent); background: rgba(0,0,0,0.45);
+    padding: 2px 8px; border-radius: 10px; letter-spacing: 0.5px;
+  }
+  body.mark-mode .lyric-line.marked .ts-tag { display: inline-block; }
+  .lyrics-empty { color: var(--text-faint); text-align: center; padding-top: 60px; font-size: 14px; }
+
+  /* ===== 底部播放器 ===== */
+  .player {
+    height: var(--player-h); flex: none; display: flex; align-items: center; gap: 16px;
+    padding: 0 22px; backdrop-filter: blur(16px);
+    background: rgba(14,14,22,0.82); border-top: 1px solid rgba(255,255,255,0.07);
+  }
+  .p-cover { width: 52px; height: 52px; border-radius: 8px; overflow: hidden; flex: none; box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
+  .p-cover img { width: 100%; height: 100%; object-fit: cover; }
+  .p-meta { min-width: 0; flex: none; width: 180px; }
+  .p-meta .t { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+  .p-meta .a { font-size: 12px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+  .p-controls { flex: none; display: flex; align-items: center; gap: 6px; }
+  .btn {
+    width: 36px; height: 36px; border-radius: 50%; border: none; cursor: pointer;
+    background: transparent; color: var(--text-sub); font-size: 18px;
+    display: flex; align-items: center; justify-content: center; transition: all .2s;
+  }
+  .btn:hover { color: #fff; background: rgba(255,255,255,0.08); }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .btn-play {
+    width: 44px; height: 44px; background: var(--accent); color: #fff;
+    font-size: 20px; box-shadow: 0 4px 18px var(--accent-dim);
+  }
+  .btn-play:hover { background: var(--accent); color: #fff; transform: scale(1.06); }
+  .p-progress { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 120px; }
+  .p-progress .time { font-size: 12px; color: var(--text-sub); font-variant-numeric: tabular-nums; flex: none; }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,0.16); outline: none; cursor: pointer; flex: 1;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 8px var(--accent-dim);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; border: none; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+  }
+  .p-side { flex: none; display: flex; align-items: center; gap: 10px; }
+  .vol { width: 90px; }
+  .btn-list { font-size: 16px; }
+
+  /* 播放列表抽屉 */
+  .playlist {
+    position: fixed; right: 0; top: 56px; bottom: var(--player-h); width: 280px;
+    background: rgba(16,16,24,0.94); backdrop-filter: blur(16px);
+    border-left: 1px solid rgba(255,255,255,0.08);
+    transform: translateX(105%); transition: transform .35s ease; z-index: 20;
+    padding: 14px; overflow-y: auto;
+  }
+  .playlist.open { transform: translateX(0); }
+  .playlist h3 { font-size: 14px; color: var(--text-sub); margin-bottom: 10px; }
+  .pl-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px;
+    cursor: pointer; transition: background .2s;
+  }
+  .pl-item:hover { background: rgba(255,255,255,0.06); }
+  .pl-item .c { width: 34px; height: 34px; border-radius: 6px; overflow: hidden; flex: none; }
+  .pl-item .c img { width: 100%; height: 100%; object-fit: cover; }
+  .pl-item .m { min-width: 0; }
+  .pl-item .m .t { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl-item .m .a { font-size: 11px; color: var(--text-faint); }
+  .pl-item.cur { background: var(--accent-dim); }
+  .pl-item.cur .t { color: #fff; }
+  .mask { position: fixed; inset: 56px 0 var(--player-h); background: rgba(0,0,0,0.3); z-index: 19; display: none; }
+  .mask.show { display: block; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: calc(var(--player-h) + 24px); transform: translateX(-50%);
+    background: rgba(30,30,40,0.95); color: #fff; font-size: 13px;
+    padding: 10px 18px; border-radius: 22px; z-index: 40; opacity: 0; pointer-events: none;
+    transition: opacity .3s, transform .3s; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
+</style>
+</head>
+<body>
+<div id="bg-layer"></div>
+<div id="bg-layer2"></div>
+<div class="mask" id="mask"></div>
+
+<div class="app">
+  <div class="topbar">
+    <div class="logo">歌词音乐站 <span>·</span> Lyric Station</div>
+    <div class="mark-toggle" id="markToggle" title="边听边点：点击歌词行生成 [mm:ss.xx] 时间戳">
+      <span class="dot"></span>
+      <span>边听边点</span>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="vinyl-wrap">
+      <div class="vinyl" id="vinyl">
+        <div class="disc-cover"><img id="discImg" alt="cover"></div>
+        <div class="disc-center"></div>
+      </div>
+    </div>
+
+    <div class="lyrics-panel">
+      <div class="lyrics-head">
+        <div>
+          <span class="song-title" id="songTitle">The Unconscious</span>
+          <span class="song-artist" id="songArtist">Nemdis</span>
+        </div>
+        <span class="mark-hint" id="markHint">标记模式：播放歌曲，点击歌词行自动打点</span>
+      </div>
+      <div class="lyrics-viewport" id="lyricsViewport"></div>
+    </div>
+  </div>
+
+  <div class="player">
+    <div class="p-cover"><img id="pCover" alt="cover"></div>
+    <div class="p-meta">
+      <div class="t" id="pTitle">The Unconscious</div>
+      <div class="a" id="pArtist">Nemdis</div>
+    </div>
+    <div class="p-controls">
+      <button class="btn" id="btnPrev" title="上一曲">⏮</button>
+      <button class="btn btn-play" id="btnPlay" title="播放/暂停">▶</button>
+      <button class="btn" id="btnNext" title="下一曲">⏭</button>
+    </div>
+    <div class="p-progress">
+      <span class="time" id="curTime">00:00</span>
+      <input type="range" id="seek" min="0" max="0" value="0">
+      <span class="time" id="durTime">00:00</span>
+    </div>
+    <div class="p-side">
+      <input type="range" class="vol" id="vol" min="0" max="1" step="0.01" value="0.8">
+      <button class="btn btn-list" id="btnList" title="播放列表">☰</button>
+    </div>
+  </div>
+</div>
+
+<div class="playlist" id="playlist">
+  <h3>播放列表</h3>
+  <div id="plItems"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<audio id="audio" preload="metadata"></audio>
+
+<script>
+/* ============ 数据模型（songs.json 结构） ============ */
+const SONGS = [
+  {
+    id: "song-01",
+    title: "The Unconscious",
+    artist: "Nemdis",
+    audio: "../audio/TheUnconscious-Nemdis.mp3",
+    cover: "../covers/TheUnconscious-Nemdis.webp",
+    lyric: "[ti:The Unconscious]\n[ar:Nemdis]\n[00:13.88]Like a moth I fly to a bright light\n[00:18.09]Everything they offer I absorb\n[00:21.41]I do not care – In my belief I'm blind\n[00:25.46]I'm like a ghost! A mirror of an era\n[00:33.16]Integral part of a crowd\n[00:37.57]Going with the current\n[00:39.93]The time is now\n[00:41.59]I'm a burst clot\n[00:45.41]I'm tainted blood\n[00:48.54]I'm dead I'm alive\n[00:52.61]Out of control I'm zombified!\n[00:58.29]Like a dummy in the clutches of the bear\n[01:00.97]Restrictive mind, my body's getting cold\n[01:06.92]I'm trapped, imprisoned\n[01:09.90]Unconsciously delirious\n[01:16.31]A mirror of an era\n[01:19.85]Integral part of a crowd\n[01:24.57]Going with the current\n[01:27.16]The time is now\n[01:28.79]I'm a burst clot\n[01:32.65]I'm tainted blood\n[01:35.37]I'm dead I'm alive\n[01:39.61]Out of control I'm zombified!\n[01:49.53]Avoid a misleading joy\n[01:53.83]You must resist temptation\n[01:57.06]Keep your mind from it\n[02:00.60]Out of control, I'm zombified\n[02:41.91]A mirror of an era\n[02:45.25]Integral part of a crowd\n[02:49.78]Going with the current\n[02:52.18]The time is now\n[02:55.93]I'm a burst clot(I'm a burst clot)\n[02:59.48]I'm tainted blood\n[03:02.80]I'm dead I'm alive(now take I'm alive)\n[03:06.36]Out of control I'm zombified!\n[03:13.86]I'm zombified",
+    trans: [
+      "像飞蛾扑向明亮的光",
+      "他们给予的一切我都全盘吸收",
+      "我不在乎——在信念之中我已盲目",
+      "我像个幽灵！一个时代的镜像",
+      "人群中不可分割的一部分",
+      "随波逐流",
+      "时机已到",
+      "我是迸裂的血块",
+      "我是污浊的血液",
+      "我已死去 却又活着",
+      "失控的我，如行尸走肉！",
+      "像熊掌之下的木偶",
+      "思想受限，身体渐渐冰冷",
+      "我被困住，被囚禁",
+      "无意识地谵妄",
+      "一个时代的镜像",
+      "人群中不可分割的一部分",
+      "随波逐流",
+      "时机已到",
+      "我是迸裂的血块",
+      "我是污浊的血液",
+      "我已死去 却又活着",
+      "失控的我，如行尸走肉！",
+      "避开误导的欢愉",
+      "你必须抵抗诱惑",
+      "让心智远离它",
+      "失控的我，如行尸走肉",
+      "一个时代的镜像",
+      "人群中不可分割的一部分",
+      "随波逐流",
+      "时机已到",
+      "我是迸裂的血块（我是迸裂的血块）",
+      "我是污浊的血液",
+      "我已死去 却又活着（如今我活着）",
+      "失控的我，如行尸走肉！",
+      "我如行尸走肉"
+    ]
+  },
+  {
+    id: "song-02",
+    title: "电子羊",
+    artist: "某幻君",
+    audio: "../audio/电子羊-某幻君.mp3",
+    cover: "../covers/电子羊-某幻君.jpg",
+    lyric: "[00:00.68]编曲：中国boy\n[00:05.18]   \n[00:05.18]作词/作曲：某幻\n[00:08.93]   \n[00:08.93]混音：杨秋儒\n[00:13.68]   \n[00:13.68]是否能梦到电子羊ay\n[00:17.18]   \n[00:17.18]When i can catch that bio sheep\n[00:20.44]   \n[00:20.44]漂浮在霓虹的海洋ay\n[00:23.93]   \n[00:23.93]When i can let that sheep grab ay\n[00:27.17]   \n[00:27.17]街边的鸣笛像在开派对\n[00:29.42]当我能够捉住普通羊时\n[00:29.42]电流在我脑中作祟\n[00:30.43]   \n[00:30.43]掀起被子和天气配对\n[00:31.93]当我能让那只羊进食时\n[00:31.93]天气很差心情节节败 退\n[00:33.92]   \n[00:33.92]这城市没有白天\n[00:35.18]   \n[00:35.18]黑夜中升起工业的白烟\n[00:37.18]   \n[00:37.18]萦绕在光怪的城市给那破败的程序带来寂寞又升起狼烟\n[00:40.68]   \n[00:40.68]人们从不正眼看我\n[00:42.18]   \n[00:42.18]他们沉浸在这低端生活\n[00:43.67]   \n[00:43.67]我的任务是帮他们排解寂寞\n[00:45.43]   \n[00:45.43]但谁又能来铺平我的颠簸\n[00:47.17]   \n[00:47.17]I have no mouth but I still wanna scream\n[00:49.18]   \n[00:49.18]无声狂啸众人却皆是醉\n[00:50.93]   \n[00:50.93]I am like a mouse though I dont wanna get into cats stomach casually ay\n[00:54.43]   \n[00:54.43]呼吸 我来到这片街道\n[00:56.43]   \n[00:56.43]雾气 是工业的毒药\n[00:57.92]   \n[00:57.92]I AINT GOT DRUNK\n[00:58.93]我没有嘴 但我仍想尖叫\n[00:58.93]钢筋散发的香薰进入我的肺\n[01:00.92]   \n[01:00.92]My feelings got fake\n[01:02.18]我像一只老鼠 但是\n[01:02.18]温暖肌肤没有知觉\n[01:03.93]我不想随便就成为猫的腹中之物\n[01:03.93]数字充斥着我的视觉\n[01:05.18]   \n[01:05.18]却期望在梦里面\n[01:06.18]   \n[01:06.18]和那梦不到的 电子羊相见\n[01:08.68]我没有醉\n[01:08.68]是否能梦到电子羊ay\n[01:11.93]   \n[01:11.93]When i can catch that bio sheep\n[01:15.43]模糊了我的感觉\n[01:15.43]漂浮在霓虹的海洋ay\n[01:18.67]   \n[01:18.67]When i can let that sheep grab ay\n[01:29.11]   \n[01:29.11]是否能梦到电子羊ay\n[01:32.60]   \n[01:32.60]When i can catch that bio sheep\n[01:35.85]   \n[01:35.85]漂浮在霓虹的海洋ay\n[01:39.35]   \n[01:39.35]When i can let that sheep grab ay\n[01:42.61]当我能够捉住普通羊时\n[01:42.61]从未听到过人们说过再见\n[01:44.10]   \n[01:44.10]唯能爱恋身上缠绕着的电线\n[01:45.85]当我能让那只羊进食时\n[01:45.85]就算摔倒我也不能流出血\n[01:47.60]当我能让那只羊进食时\n[01:47.60]只能低头看着洒落的营养液\n[01:49.60]   \n[01:49.60]会呼吸的街道人流涌动\n[01:51.11]当我能够捉住普通羊时\n[01:51.11]无法呼吸的我想要伸手触碰\n[01:52.86]   \n[01:52.86]眼前浮窗却提醒我请勿触碰\n[01:54.60]当我能让那只羊进食时\n[01:54.60]身体像是八百吨的负重 error\n[01:56.35]   \n[01:56.35]I GOT RICHES IN MY MIND\n[01:57.85]   \n[01:57.85]I GOT NOTHING IN MY MIND\n[01:59.35]   \n[01:59.35]I GOT PLEASURE SORROW ANGER JOYS PASSIONS IN MY MIND\n[02:02.60]   \n[02:02.60]Nobody cares\n[02:03.60]   \n[02:03.60]停留 都是无谓的挣扎\n[02:05.10]   \n[02:05.10]爆发着将那爱恋着的拔下\n[02:06.35]   \n[02:06.35]街道很冰感觉像是回了家\n[02:07.85]   \n[02:07.85]希望电子羊不会嫌弃我的邋遢\n[02:10.35]   \n[02:10.35]是否能梦到电子羊ay\n[02:13.60]   \n[02:13.60]When i can catch that bio sheep\n[02:17.10]身体像是八百吨的负重 出错\n[02:17.10]漂浮在霓虹的海洋ay\n[02:20.60]我的思想丰富\n[02:20.60]When i can let that sheep grab ay\n[02:24.10]却又一无所有\n[02:24.10]是否能梦到电子羊ay\n[02:27.35]万般情绪交织\n[02:27.35]When i can catch that bio sheep\n[02:30.85]无人在乎\n[02:30.85]漂浮在霓虹的海洋ay\n[02:34.35]   \n[02:34.35]When i can let that sheep grab ay\n[02:37.60]   \n[02:37.60]漂浮在霓虹的海洋ay\n[02:41.10]   \n[02:41.10]When i can let that sheep grab ay\n[03:13.00]   \n[03:13.00]未经许可,不得翻唱或使用\n[03:18.00]"
+  }
+];
+
+/* 内置歌词纯文本（无时间戳，供「边听边点」标记工具使用），按歌曲 id 独立存放 */
+const BUILTIN_LYRICS = {
+  "song-01": [
+  "Like a moth I fly to a bright light",
+  "Everything they offer I absorb",
+  "I do not care – In my belief I'm blind",
+  "I'm like a ghost! A mirror of an era",
+  "Integral part of a crowd",
+  "Going with the current",
+  "The time is now",
+  "I'm a burst clot",
+  "I'm tainted blood",
+  "I'm dead I'm alive",
+  "Out of control I'm zombified!",
+  "Like a dummy in the clutches of the bear",
+  "Restrictive mind, my body's getting cold",
+  "I'm trapped, imprisoned",
+  "Unconsciously delirious",
+  "A mirror of an era",
+  "Integral part of a crowd",
+  "Going with the current",
+  "The time is now",
+  "I'm a burst clot",
+  "I'm tainted blood",
+  "I'm dead I'm alive",
+  "Out of control I'm zombified!",
+  "Avoid a misleading joy",
+  "You must resist temptation",
+  "Keep your mind from it",
+  "Out of control, I'm zombified",
+  "A mirror of an era",
+  "Integral part of a crowd",
+  "Going with the current",
+  "The time is now",
+  "I'm a burst clot(I'm a burst clot)",
+  "I'm tainted blood",
+  "I'm dead I'm alive(now take I'm alive)",
+  "Out of control I'm zombified!",
+  "I'm zombified"
+  ]
+};
+
+/* ============ 全局状态 ============ */
+const audio = document.getElementById("audio");
+let currentIndex = 0;
+let lyrics = [];          // [{ time: number|null, text: string }]
+let markMode = false;
+let undoStack = [];       // 撤销栈 [{ index, oldTime }]
+let toastTimer = null;
+
+/* ============ DOM 引用 ============ */
+const $ = id => document.getElementById(id);
+const viewport = $("lyricsViewport");
+const seek = $("seek"), vol = $("vol"), btnPlay = $("btnPlay");
+const vinyl = $("vinyl");
+
+/* ============ 歌词解析（LRC） ============ */
+function parseLRC(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    if (/^\[(ti|ar|al|by|re|ve|length|offset):/i.test(line)) continue;
+    const timestamps = [];
+    const re = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      const mm = parseInt(m[1], 10);
+      const ss = parseInt(m[2], 10);
+      const frac = m[3] ? parseInt(m[3].padEnd(3, "0"), 10) / 1000 : 0;
+      timestamps.push(mm * 60 + ss + frac);
+    }
+    const text = line.replace(/\[\d{1,2}:\d{1,2}(?:[.:]\d{1,3})?\]/g, "").trim();
+    if (timestamps.length > 0 && text) {
+      for (const t of timestamps) out.push({ time: t, text });
+    } else if (text) {
+      out.push({ time: null, text });
+    }
+  }
+  return out.sort((a, b) => {
+    if (a.time === null && b.time === null) return 0;
+    if (a.time === null) return 1;   // 无时间戳行排后，保持顺序显示
+    if (b.time === null) return -1;
+    return a.time - b.time;
+  });
+}
+
+/* 当前歌曲歌词：有时间戳则用 LRC，否则内置纯文本行 */
+function loadLyrics(song) {
+  undoStack = [];
+  if (song.lyric) {
+    lyrics = parseLRC(song.lyric);
+  } else {
+    const raw = BUILTIN_LYRICS[song.id] || [];
+    lyrics = raw.map(text => ({ time: null, text }));
+  }
+  // 中英文对照：若歌曲配置了 trans 译文数组，按行对齐挂到对应行上
+  if (Array.isArray(song.trans)) {
+    const timedOnly = lyrics.filter(l => l.time !== null);
+    song.trans.forEach((t, i) => {
+      if (timedOnly[i] && t && t.trim()) timedOnly[i].trans = t.trim();
+    });
+  }
+  renderLyrics();
+}
+
+/* ============ 歌词渲染 ============ */
+function renderLyrics() {
+  viewport.innerHTML = "";
+  if (!lyrics.length) {
+    viewport.innerHTML = '<div class="lyrics-empty">暂无歌词，开启「边听边点」模式录入</div>';
+    return;
+  }
+  lyrics.forEach((line, i) => {
+    const div = document.createElement("div");
+    div.className = "lyric-line" + (line.time !== null ? " marked" : "");
+    div.dataset.index = i;
+    const main = document.createElement("span");
+    main.className = "lyric-main";
+    main.textContent = line.text;
+    div.appendChild(main);
+    if (line.trans) {
+      const sub = document.createElement("span");
+      sub.className = "lyric-trans";
+      sub.textContent = line.trans;
+      div.appendChild(sub);
+    }
+    const tag = document.createElement("span");
+    tag.className = "ts-tag";
+    tag.textContent = line.time !== null ? fmtTime(line.time) : "";
+    div.appendChild(tag);
+    div.addEventListener("click", () => onLineClick(i, div));
+    viewport.appendChild(div);
+  });
+  // 首尾占位：让第一句/最后一句也能滚动到面板正中央（避免开头停在顶部）
+  const topGap = document.createElement("div");
+  topGap.className = "lyric-gap";
+  const bottomGap = document.createElement("div");
+  bottomGap.className = "lyric-gap";
+  viewport.insertBefore(topGap, viewport.firstChild);
+  viewport.appendChild(bottomGap);
+  requestAnimationFrame(() => {
+    const first = viewport.querySelector(".lyric-line");
+    const rowH = first ? first.offsetHeight : 53.5; // 用真实行高（双语行更高）
+    const pad = Math.max(0, viewport.clientHeight / 2 - rowH / 2);
+    topGap.style.height = pad + "px";
+    bottomGap.style.height = pad + "px";
+  });
+}
+
+/* ============ 时间格式化 ============ */
+function fmtTime(t) {
+  const mm = Math.floor(t / 60);
+  const ss = Math.floor(t % 60);
+  const cc = Math.floor((t - Math.floor(t)) * 100);
+  return String(mm).padStart(2, "0") + ":" + String(ss).padStart(2, "0") + "." + String(cc).padStart(2, "0");
+}
+function fmtClock(t) {
+  const mm = Math.floor(t / 60);
+  const ss = Math.floor(t % 60);
+  return String(mm).padStart(2, "0") + ":" + String(ss).padStart(2, "0");
+}
+
+/* ============ 歌词引擎：高亮 + 滚动居中 ============ */
+let activeIndex = -1;
+function updateLyric() {
+  if (!markMode) { /* 正常模式照样高亮 */
+  }
+  const timed = lyrics
+    .map((l, i) => ({ i, time: l.time }))
+    .filter(x => x.time !== null)
+    .sort((a, b) => a.time - b.time);
+  if (!timed.length) { clearActive(); return; }
+  const t = audio.currentTime;
+  let idx = -1;
+  for (let k = 0; k < timed.length; k++) {
+    if (timed[k].time <= t + 0.08) idx = timed[k].i;
+    else break;
+  }
+  if (idx === -1 && timed.length && t < timed[0].time) {
+    idx = -1;
+  }
+  if (idx === -1 && timed.length) idx = timed[0].i; // 开头前显示第一句
+  setActive(idx);
+}
+let lastAutoScrollAt = 0;
+function setActive(i) {
+  if (i === activeIndex) return;
+  clearActive();
+  activeIndex = i;
+  const lines = viewport.querySelectorAll(".lyric-line");
+  if (i < 0 || i >= lines.length) return;
+  const el = lines[i];
+  el.classList.add("active");
+  // 用户正在拖动歌词时不抢滚动，只高亮
+  if (performance.now() - lastUserScrollAt < 400) return;
+  // 垂直居中：目标 = 行中心 - 视口中心（viewport 为 position:relative 参照）
+  const target = Math.max(0, el.offsetTop - viewport.clientHeight / 2 + el.clientHeight / 2);
+  // 瞬时定位，避免 smooth 动画在密集换行时掉帧卡顿
+  lastAutoScrollAt = performance.now();
+  viewport.scrollTo({ top: target, behavior: "auto" });
+}
+function clearActive() {
+  if (activeIndex >= 0) {
+    const lines = viewport.querySelectorAll(".lyric-line");
+    if (lines[activeIndex]) lines[activeIndex].classList.remove("active");
+  }
+  activeIndex = -1;
+}
+
+/* ============ 歌词拖动滚动：松手跳转进度 ============ */
+let lastUserScrollAt = 0;
+let userScrollTimer = null;
+function centerLineIndex() {
+  const lines = viewport.querySelectorAll(".lyric-line");
+  const cy = viewport.scrollTop + viewport.clientHeight / 2;
+  let best = -1, bestD = Infinity;
+  for (let k = 0; k < lines.length; k++) {
+    const d = Math.abs(lines[k].offsetTop + lines[k].clientHeight / 2 - cy);
+    if (d < bestD) { bestD = d; best = k; }
+  }
+  return best;
+}
+viewport.addEventListener("scroll", () => {
+  // 非自动滚动触发的滚动视为用户拖动
+  if (performance.now() - lastAutoScrollAt > 400) lastUserScrollAt = performance.now();
+  clearTimeout(userScrollTimer);
+  userScrollTimer = setTimeout(() => {
+    if (performance.now() - lastAutoScrollAt < 400) return; // 自动滚动驱动，不跳转
+    const i = centerLineIndex();
+    if (i >= 0 && lyrics[i] && lyrics[i].time !== null) {
+      audio.currentTime = lyrics[i].time + 0.05;
+      if (audio.paused) audio.play();
+      showToast("已跳到 " + lyrics[i].text.slice(0, 12) + "…  " + fmtTime(lyrics[i].time));
+    }
+  }, 300);
+});
+
+/* ============ 边听边点 标记工具 ============ */
+$("markToggle").addEventListener("click", () => {
+  markMode = !markMode;
+  $("markToggle").classList.toggle("active", markMode);
+  document.body.classList.toggle("mark-mode", markMode);
+  $("markHint").classList.toggle("show", markMode);
+  showToast(markMode ? "已开启标记模式：播放歌曲，点击歌词行自动生成 [mm:ss.xx] 时间戳" : "已关闭标记模式");
+});
+
+function onLineClick(i, el) {
+  if (!markMode) {
+    // 非标记模式：若该句已有时间戳，跳到对应播放位置
+    if (lyrics[i].time !== null) {
+      audio.currentTime = lyrics[i].time;
+      if (audio.paused) audio.play();
+    }
+    return;
+  }
+  const t = audio.currentTime;
+  const old = lyrics[i].time;
+  lyrics[i].time = t;
+  undoStack.push({ index: i, oldTime: old });
+  el.classList.add("marked");
+  el.querySelector(".ts-tag").textContent = fmtTime(t);
+  showToast("已为第 " + (i + 1) + " 行打点 [" + fmtTime(t) + "]");
+}
+
+/* 撤销最近一次打点 */
+function undoMark() {
+  const op = undoStack.pop();
+  if (!op) { showToast("没有可撤销的打点"); return; }
+  lyrics[op.index].time = op.oldTime;
+  const lines = viewport.querySelectorAll(".lyric-line");
+  const el = lines[op.index];
+  if (!el) return;
+  if (op.oldTime !== null) {
+    el.classList.add("marked");
+    el.querySelector(".ts-tag").textContent = fmtTime(op.oldTime);
+  } else {
+    el.classList.remove("marked");
+    el.querySelector(".ts-tag").textContent = "";
+  }
+  showToast("已撤销第 " + (op.index + 1) + " 行打点");
+}
+
+/* 导出 / 复制 LRC */
+function buildLRC() {
+  const song = SONGS[currentIndex];
+  let out = "";
+  out += "[ti:" + song.title + "]\n";
+  out += "[ar:" + song.artist + "]\n";
+  for (const line of lyrics) {
+    if (line.time !== null) {
+      out += "[" + fmtTime(line.time) + "]" + line.text + "\n";
+    } else {
+      out += line.text + "\n";   // 未打点行保持无时间戳
+    }
+  }
+  return out;
+}
+function exportLRC() {
+  const lrc = buildLRC();
+  const song = SONGS[currentIndex];
+  const blob = new Blob([lrc], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = song.artist + "-" + song.title + ".lrc";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  showToast("LRC 已导出：" + a.download);
+}
+function copyLRC() {
+  const lrc = buildLRC();
+  const done = () => showToast("LRC 已复制到剪贴板");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(lrc).then(done).catch(() => legacyCopy(lrc, done));
+  } else {
+    legacyCopy(lrc, done);
+  }
+}
+function legacyCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); } catch (e) { showToast("复制失败，请手动选择导出"); }
+  ta.remove();
+}
+
+/* 标记工具栏（在歌词面板右上角区域，通过键盘/按钮触发） */
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if ($("playlist").classList.contains("open")) { closePlaylist(); return; }
+    if (markMode) { $("markToggle").click(); }
+  }
+  if (e.key.toLowerCase() === "z" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (markMode) undoMark();
+  }
+  if (e.key.toLowerCase() === "e" && (e.ctrlKey || e.metaKey) && markMode) {
+    e.preventDefault();
+    exportLRC();
+  }
+  if (e.key.toLowerCase() === "c" && (e.ctrlKey || e.metaKey) && e.shiftKey && markMode) {
+    e.preventDefault();
+    copyLRC();
+  }
+});
+
+/* 标记操作按钮（桌面可见入口：置于歌词面板标题行） */
+(function addMarkActions() {
+  const head = document.querySelector(".lyrics-head");
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "display:flex;gap:6px;align-items:center;flex:none;";
+  const mk = (label, title, fn) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.title = title;
+    b.style.cssText = "font-size:12px;color:var(--text-sub);background:var(--panel-bg);border:1px solid rgba(255,255,255,0.14);border-radius:14px;padding:4px 10px;cursor:pointer;transition:all .2s;";
+    b.addEventListener("mouseenter", () => { b.style.color = "#fff"; });
+    b.addEventListener("mouseleave", () => { b.style.color = "var(--text-sub)"; });
+    b.addEventListener("click", fn);
+    return b;
+  };
+  wrap.appendChild(mk("撤销", "撤销最近一次打点（Ctrl+Z）", undoMark));
+  wrap.appendChild(mk("复制LRC", "复制 LRC 文本（标记模式 Ctrl+Shift+C）", copyLRC));
+  wrap.appendChild(mk("导出LRC", "下载 .lrc 文件（标记模式 Ctrl+E）", exportLRC));
+  head.appendChild(wrap);
+})();
+
+/* ============ 播放器 ============ */
+let switchToken = 0;
+function loadSong(i) {
+  const token = ++switchToken;
+  currentIndex = i;
+  const song = SONGS[i];
+  $("songTitle").textContent = song.title;
+  $("songArtist").textContent = song.artist;
+  $("pTitle").textContent = song.title;
+  $("pArtist").textContent = song.artist;
+  // 丝滑切换：封面与歌词淡出
+  const disc = $("discImg"), pCover = $("pCover");
+  disc.classList.remove("swap-in"); disc.classList.add("swap-out");
+  pCover.classList.remove("swap-in"); pCover.classList.add("swap-out");
+  viewport.classList.add("fading");
+  // 换图：等淡出过渡完成后加载新封面并淡入
+  setTimeout(() => {
+    if (token !== switchToken) return;
+    disc.src = song.cover;
+    pCover.src = song.cover;
+    const fadeIn = () => {
+      if (token !== switchToken) return;
+      disc.classList.remove("swap-out"); disc.classList.add("swap-in");
+      pCover.classList.remove("swap-out"); pCover.classList.add("swap-in");
+    };
+    if (disc.complete && disc.naturalWidth > 0) fadeIn();
+    else { disc.addEventListener("load", fadeIn, { once: true }); disc.addEventListener("error", fadeIn, { once: true }); }
+  }, 150);
+  // 歌词面板：淡出后重新渲染并淡入
+  setTimeout(() => {
+    if (token !== switchToken) return;
+    loadLyrics(song);
+    viewport.classList.remove("fading");
+  }, 230);
+  extractColor(song.cover);
+  renderPlaylist();
+  updatePlayState();
+  if (!audio.paused) audio.pause();
+  audio.currentTime = 0;
+  audio.src = song.audio;
+  audio.load();
+  audio.play().then(() => updatePlayState()).catch(() => {
+    showToast("音频加载失败：请通过本地服务器访问（如 npx serve），file:// 下部分浏览器禁止加载本地 mp3");
+  });
+  preloadAdjacent();
+}
+
+/* 预加载相邻歌曲封面与音频，减少切换等待 */
+function preloadAdjacent() {
+  if (SONGS.length < 2) return;
+  const next = SONGS[(currentIndex + 1) % SONGS.length];
+  const img = new Image();
+  img.src = next.cover;
+  const au = new Audio();
+  au.preload = "auto";
+  au.src = next.audio;
+}
+
+function updatePlayState() {
+  vinyl.classList.toggle("playing", !audio.paused && !audio.ended);
+  btnPlay.textContent = audio.paused ? "▶" : "⏸";
+  $("btnPrev").disabled = SONGS.length < 2;
+  $("btnNext").disabled = SONGS.length < 2;
+}
+
+btnPlay.addEventListener("click", () => {
+  if (!audio.src) { loadSong(0); return; }
+  if (audio.paused) audio.play(); else audio.pause();
+});
+$("btnPrev").addEventListener("click", () => {
+  if (SONGS.length < 2) return;
+  loadSong((currentIndex - 1 + SONGS.length) % SONGS.length);
+});
+$("btnNext").addEventListener("click", () => {
+  if (SONGS.length < 2) return;
+  loadSong((currentIndex + 1) % SONGS.length);
+});
+
+audio.addEventListener("play", updatePlayState);
+audio.addEventListener("pause", updatePlayState);
+audio.addEventListener("ended", () => {
+  if (SONGS.length > 1) loadSong((currentIndex + 1) % SONGS.length);
+  else { updatePlayState(); setActive(-1); }
+});
+audio.addEventListener("loadedmetadata", () => {
+  seek.max = audio.duration || 0;
+  $("durTime").textContent = fmtClock(audio.duration || 0);
+});
+audio.addEventListener("timeupdate", () => {
+  if (!seek.matches(":active")) {
+    seek.value = audio.currentTime || 0;
+    $("curTime").textContent = fmtClock(audio.currentTime || 0);
+  }
+  updateLyric();
+});
+audio.addEventListener("error", () => {
+  showToast("音频加载失败：请通过本地服务器访问（file:// 下部分浏览器禁止加载本地 mp3）");
+});
+
+seek.addEventListener("input", () => {
+  audio.currentTime = parseFloat(seek.value);
+  $("curTime").textContent = fmtClock(audio.currentTime);
+});
+vol.addEventListener("input", () => {
+  audio.volume = parseFloat(vol.value);
+});
+
+/* ============ 播放列表 ============ */
+function renderPlaylist() {
+  const box = $("plItems");
+  box.innerHTML = "";
+  SONGS.forEach((s, i) => {
+    const div = document.createElement("div");
+    div.className = "pl-item" + (i === currentIndex ? " cur" : "");
+    div.innerHTML = '<div class="c"><img src="' + s.cover + '" alt=""></div><div class="m"><div class="t">' + s.title + '</div><div class="a">' + s.artist + '</div></div>';
+    div.addEventListener("click", () => { loadSong(i); closePlaylist(); });
+    box.appendChild(div);
+  });
+}
+function openPlaylist() {
+  $("playlist").classList.add("open");
+  $("mask").classList.add("show");
+}
+function closePlaylist() {
+  $("playlist").classList.remove("open");
+  $("mask").classList.remove("show");
+}
+$("btnList").addEventListener("click", () => {
+  $("playlist").classList.contains("open") ? closePlaylist() : openPlaylist();
+});
+$("mask").addEventListener("click", closePlaylist);
+
+/* ============ 封面主色提取 → 氛围背景 ============ */
+function extractColor(src) {
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => {
+    try {
+      const c = document.createElement("canvas");
+      c.width = 64; c.height = 64;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0, 64, 64);
+      const data = ctx.getImageData(0, 0, 64, 64).data;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+      }
+      r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+      applyBg(r, g, b);
+    } catch (e) {
+      fallbackBg();
+    }
+  };
+  img.onerror = fallbackBg;
+  img.src = src;
+}
+let bgFlip = false; // 双背景层交叉淡入：记录哪一层当前显示
+function applyBg(r, g, b) {
+  document.documentElement.style.setProperty("--accent", "rgb(" + Math.max(r, 60) + "," + Math.min(g + 20, 255) + "," + Math.max(b, 40) + ")");
+  const grad = "radial-gradient(ellipse at 32% 0%, rgba(" + r + "," + g + "," + b + ",0.55), rgba(8,8,14,0.94) 72%)";
+  const cur = bgFlip ? $("bg-layer") : $("bg-layer2");
+  const next = bgFlip ? $("bg-layer2") : $("bg-layer");
+  next.style.background = grad;
+  requestAnimationFrame(() => {
+    next.style.opacity = "1";
+    cur.style.opacity = "0";
+  });
+  bgFlip = !bgFlip;
+}
+function fallbackBg() {
+  const grad = "radial-gradient(ellipse at 32% 0%, rgba(80,60,110,0.6), rgba(8,8,14,0.94) 72%)";
+  const cur = bgFlip ? $("bg-layer") : $("bg-layer2");
+  const next = bgFlip ? $("bg-layer2") : $("bg-layer");
+  next.style.background = grad;
+  requestAnimationFrame(() => {
+    next.style.opacity = "1";
+    cur.style.opacity = "0";
+  });
+  bgFlip = !bgFlip;
+}
+
+/* ============ Toast ============ */
+function showToast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2400);
+}
+
+/* ============ 初始化 ============ */
+loadSong(0);
+</script>
+</body>
+</html>
